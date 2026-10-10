@@ -29,7 +29,6 @@ concurrency:
 
 env:
   SOURCE_REPOSITORY: kordless/bonsai-docker
-  IMAGE_NAME: ${{ github.event.inputs.image_name || format('ghcr.io/{0}/bonsai-docker', github.repository_owner) }}
 
 jobs:
   build:
@@ -43,6 +42,8 @@ jobs:
         shell: bash
         env:
           SOURCE_REF_INPUT: ${{ github.event.inputs.source_ref }}
+          IMAGE_NAME_INPUT: ${{ github.event.inputs.image_name }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
           source_ref="${SOURCE_REF_INPUT:-main}"
@@ -50,8 +51,11 @@ jobs:
           if [ -z "$source_ref_slug" ]; then
             source_ref_slug="source"
           fi
+          raw_image_name="${IMAGE_NAME_INPUT:-ghcr.io/${REPOSITORY_OWNER}/bonsai-docker}"
+          image_name="$(printf '%s' "$raw_image_name" | tr '[:upper:]' '[:lower:]')"
           echo "ref=$source_ref" >> "$GITHUB_OUTPUT"
           echo "slug=$source_ref_slug" >> "$GITHUB_OUTPUT"
+          echo "image_name=$image_name" >> "$GITHUB_OUTPUT"
 
       - name: Check out Bonsai Docker source
         uses: actions/checkout@v4
@@ -79,8 +83,7 @@ jobs:
           platforms: linux/amd64
           push: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.push_image == 'true' }}
           tags: |
-            ${{ env.IMAGE_NAME }}:${{ steps.source.outputs.slug }}
-            ${{ env.IMAGE_NAME }}:latest
+            ${{ steps.source.outputs.image_name }}:${{ steps.source.outputs.slug }}
+            ${{ steps.source.outputs.image_name }}:latest
           cache-from: type=gha,scope=bonsai-docker
           cache-to: type=gha,mode=max,scope=bonsai-docker
-
