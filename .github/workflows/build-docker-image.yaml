@@ -1,0 +1,86 @@
+name: Build Bonsai Docker image
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Branch, tag, or SHA in kordless/bonsai-docker to build.
+        required: false
+        default: main
+      image_name:
+        description: Optional GHCR image name, for example ghcr.io/<owner>/bonsai-docker. Defaults to ghcr.io/<this-repo-owner>/bonsai-docker.
+        required: false
+        default: ""
+      push_image:
+        description: Push the built image to GHCR.
+        type: boolean
+        required: true
+        default: false
+  schedule:
+    - cron: "0 3 * * 1"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-bonsai-docker-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SOURCE_REPOSITORY: kordless/bonsai-docker
+  IMAGE_NAME: ${{ github.event.inputs.image_name || format('ghcr.io/{0}/bonsai-docker', github.repository_owner) }}
+
+jobs:
+  build:
+    name: Build Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Resolve source ref
+        id: source
+        shell: bash
+        env:
+          SOURCE_REF_INPUT: ${{ github.event.inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          source_ref="${SOURCE_REF_INPUT:-main}"
+          source_ref_slug="$(printf '%s' "$source_ref" | tr '/:@' '----' | tr -cd 'A-Za-z0-9_.-' | cut -c1-128)"
+          if [ -z "$source_ref_slug" ]; then
+            source_ref_slug="source"
+          fi
+          echo "ref=$source_ref" >> "$GITHUB_OUTPUT"
+          echo "slug=$source_ref_slug" >> "$GITHUB_OUTPUT"
+
+      - name: Check out Bonsai Docker source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPOSITORY }}
+          ref: ${{ steps.source.outputs.ref }}
+          path: bonsai-docker
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.push_image == 'true' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: bonsai-docker
+          file: bonsai-docker/Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.push_image == 'true' }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.source.outputs.slug }}
+            ${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha,scope=bonsai-docker
+          cache-to: type=gha,mode=max,scope=bonsai-docker
+
