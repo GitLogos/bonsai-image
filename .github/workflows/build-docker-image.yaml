@@ -73,6 +73,7 @@ jobs:
         run: |
           cp slim-config/.github/docker/Dockerfile.slim bonsai-docker/Dockerfile
           cp slim-config/.github/docker/entrypoint.sh bonsai-docker/entrypoint.sh
+          sed -i 's/\r$//' bonsai-docker/entrypoint.sh bonsai-docker/scripts/*.sh bonsai-docker/setup.sh
           chmod +x bonsai-docker/entrypoint.sh bonsai-docker/scripts/*.sh bonsai-docker/setup.sh
 
       - name: Set up Docker Buildx
