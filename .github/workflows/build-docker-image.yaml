@@ -64,6 +64,39 @@ jobs:
           ref: ${{ steps.source.outputs.ref }}
           path: bonsai-docker
 
+      - name: Patch Docker image for deployed frontend
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          dockerfile = Path("bonsai-docker/Dockerfile")
+          dockerfile_text = dockerfile.read_text()
+          dockerfile_text = dockerfile_text.replace(
+              "RUN cd vendor/image-studio/frontend \\\n    && npm install --no-audit --no-fund",
+              "RUN cd vendor/image-studio/frontend \\\n"
+              "    && npm install --no-audit --no-fund \\\n"
+              "    && NEXT_PUBLIC_BACKEND_URL=\"http://127.0.0.1:8000\" npm run build",
+          )
+          dockerfile.write_text(dockerfile_text)
+
+          entrypoint = Path("bonsai-docker/entrypoint.sh")
+          entrypoint_text = entrypoint.read_text()
+          entrypoint_text = entrypoint_text.replace(
+              "NEXT_PUBLIC_BACKEND_URL: http://localhost:8000",
+              "NEXT_PUBLIC_BACKEND_URL: http://127.0.0.1:8000",
+          )
+          entrypoint_text = entrypoint_text.replace(
+              "# Launch Next.js dev server in the background\n"
+              "cd /app/vendor/image-studio/frontend\n"
+              "PORT=3000 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BACKEND_URL=\"http://localhost:8000\" npm run dev &",
+              "# Launch the prebuilt Next.js production server in the background.\n"
+              "cd /app/vendor/image-studio/frontend\n"
+              "PORT=3000 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BACKEND_URL=\"http://127.0.0.1:8000\" npm start &",
+          )
+          entrypoint.write_text(entrypoint_text)
+          PY
+
       - name: Ensure shell scripts are executable
         run: chmod +x bonsai-docker/scripts/*.sh bonsai-docker/setup.sh
 
