@@ -1,0 +1,83 @@
+# ==========================================
+# Phase 1: Build & Sync
+# ==========================================
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    git \
+    build-essential \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ADD https://astral.sh/uv/install.sh /install.sh
+RUN chmod +x /install.sh && /install.sh && rm /install.sh
+ENV PATH="/app/.venv/bin:/root/.local/bin:${PATH}"
+
+ENV UV_PYTHON_INSTALL_DIR="/app/python"
+RUN uv python install 3.11
+
+WORKDIR /app
+
+RUN git clone --depth=1 https://github.com/PrismML-Eng/image-studio.git vendor/image-studio \
+    && git clone --depth=1 https://github.com/PrismML-Eng/mflux-prism.git vendor/mflux-prism
+
+RUN sed -i 's|^mflux = { git = .*$|mflux = { path = "../mflux-prism", editable = true }|' vendor/image-studio/pyproject.toml
+
+COPY pyproject.toml uv.lock ./
+
+RUN uv venv .venv --python 3.11 \
+    && uv sync --frozen
+
+RUN set -eux; \
+    NODEJS_WHEEL_DIR="$(.venv/bin/python -c 'import os, nodejs_wheel; print(os.path.dirname(nodejs_wheel.__file__))')"; \
+    ln -sf "../lib/node_modules/npm/bin/npm-cli.js" "$NODEJS_WHEEL_DIR/bin/npm"; \
+    ln -sf "../lib/node_modules/npm/bin/npx-cli.js" "$NODEJS_WHEEL_DIR/bin/npx"; \
+    for binary in node npm npx corepack; do \
+      ln -sf "$NODEJS_WHEEL_DIR/bin/$binary" ".venv/bin/$binary"; \
+    done; \
+    .venv/bin/node --version; \
+    .venv/bin/npm --version
+
+RUN cd vendor/image-studio/frontend \
+    && npm install --no-audit --no-fund \
+    && NEXT_PUBLIC_BACKEND_URL="http://127.0.0.1:8000" npm run build \
+    && npm prune --omit=dev \
+    && rm -rf .next/cache /root/.npm
+
+COPY scripts/ ./scripts/
+COPY README.md setup.sh ./
+RUN chmod +x ./scripts/*.sh ./setup.sh \
+    && rm -rf vendor/image-studio/.git vendor/mflux-prism/.git \
+    && find /app -type d -name __pycache__ -prune -exec rm -rf {} + \
+    && find /app -name '*.pyc' -delete
+
+# ==========================================
+# Phase 2: Runtime Environment
+# ==========================================
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS runner
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app /app
+
+ENV PATH="/app/.venv/bin:${PATH}"
+
+EXPOSE 8000
+EXPOSE 3000
+
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+ENTRYPOINT ["/app/entrypoint.sh"]

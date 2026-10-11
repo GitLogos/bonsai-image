@@ -1,10 +1,10 @@
-name: Build Bonsai Docker image
+name: Build Bonsai Docker slim image
 
 on:
   workflow_dispatch:
     inputs:
       source_ref:
-        description: Branch, tag, or SHA in kordless/bonsai-docker to build.
+        description: Branch, tag, or SHA in kordless/bonsai-docker to use as the build context.
         required: false
         default: main
       image_name:
@@ -15,16 +15,14 @@ on:
         description: Push the built image to GHCR.
         type: boolean
         required: true
-        default: false
-  schedule:
-    - cron: "0 3 * * 1"
+        default: true
 
 permissions:
   contents: read
   packages: write
 
 concurrency:
-  group: build-bonsai-docker-${{ github.workflow }}-${{ github.ref }}
+  group: build-bonsai-docker-slim-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -32,7 +30,7 @@ env:
 
 jobs:
   build:
-    name: Build Docker image
+    name: Build slim Docker image
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -64,41 +62,18 @@ jobs:
           ref: ${{ steps.source.outputs.ref }}
           path: bonsai-docker
 
-      - name: Patch Docker image for deployed frontend
-        shell: bash
+      - name: Check out slim Docker configuration
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.ref }}
+          path: slim-config
+
+      - name: Apply slim Docker configuration
         run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          dockerfile = Path("bonsai-docker/Dockerfile")
-          dockerfile_text = dockerfile.read_text()
-          dockerfile_text = dockerfile_text.replace(
-              "RUN cd vendor/image-studio/frontend \\\n    && npm install --no-audit --no-fund",
-              "RUN cd vendor/image-studio/frontend \\\n"
-              "    && npm install --no-audit --no-fund \\\n"
-              "    && NEXT_PUBLIC_BACKEND_URL=\"http://127.0.0.1:8000\" npm run build",
-          )
-          dockerfile.write_text(dockerfile_text)
-
-          entrypoint = Path("bonsai-docker/entrypoint.sh")
-          entrypoint_text = entrypoint.read_text()
-          entrypoint_text = entrypoint_text.replace(
-              "NEXT_PUBLIC_BACKEND_URL: http://localhost:8000",
-              "NEXT_PUBLIC_BACKEND_URL: http://127.0.0.1:8000",
-          )
-          entrypoint_text = entrypoint_text.replace(
-              "# Launch Next.js dev server in the background\n"
-              "cd /app/vendor/image-studio/frontend\n"
-              "PORT=3000 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BACKEND_URL=\"http://localhost:8000\" npm run dev &",
-              "# Launch the prebuilt Next.js production server in the background.\n"
-              "cd /app/vendor/image-studio/frontend\n"
-              "PORT=3000 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BACKEND_URL=\"http://127.0.0.1:8000\" npm start &",
-          )
-          entrypoint.write_text(entrypoint_text)
-          PY
-
-      - name: Ensure shell scripts are executable
-        run: chmod +x bonsai-docker/scripts/*.sh bonsai-docker/setup.sh
+          cp slim-config/.github/docker/Dockerfile.slim bonsai-docker/Dockerfile
+          cp slim-config/.github/docker/entrypoint.sh bonsai-docker/entrypoint.sh
+          chmod +x bonsai-docker/entrypoint.sh bonsai-docker/scripts/*.sh bonsai-docker/setup.sh
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -119,7 +94,7 @@ jobs:
           platforms: linux/amd64
           push: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.push_image == 'true' }}
           tags: |
-            ${{ steps.source.outputs.image_name }}:${{ steps.source.outputs.slug }}
-            ${{ steps.source.outputs.image_name }}:latest
-          cache-from: type=gha,scope=bonsai-docker
-          cache-to: type=gha,mode=max,scope=bonsai-docker
+            ${{ steps.source.outputs.image_name }}:slim
+            ${{ steps.source.outputs.image_name }}:${{ steps.source.outputs.slug }}-slim
+          cache-from: type=gha,scope=bonsai-docker-slim
+          cache-to: type=gha,mode=max,scope=bonsai-docker-slim
