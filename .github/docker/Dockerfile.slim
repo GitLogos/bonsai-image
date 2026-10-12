@@ -1,14 +1,14 @@
 # ==========================================
 # Phase 1: Build & Sync
 # ==========================================
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS builder
+FROM ubuntu:22.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV DISABLE_CUDA=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
-    build-essential \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -50,14 +50,24 @@ RUN cd vendor/image-studio/frontend \
 COPY scripts/ ./scripts/
 COPY README.md setup.sh ./
 RUN chmod +x ./scripts/*.sh ./setup.sh \
-    && rm -rf vendor/image-studio/.git vendor/mflux-prism/.git \
+    && rm -rf \
+      vendor/mflux-prism \
+      vendor/image-studio/.git \
+      vendor/image-studio/backend \
+      vendor/image-studio/backend_gpu/tests \
+      vendor/image-studio/frontend/__tests__ \
+      vendor/image-studio/frontend/.gitignore \
+      vendor/image-studio/frontend/eslint.config.mjs \
+      vendor/image-studio/frontend/vitest.config.ts \
+      vendor/image-studio/frontend/tsconfig.json \
+      .venv/lib/python3.11/site-packages/hqq/kernels \
     && find /app -type d -name __pycache__ -prune -exec rm -rf {} + \
     && find /app -name '*.pyc' -delete
 
 # ==========================================
 # Phase 2: Runtime Environment
 # ==========================================
-FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS runner
+FROM ubuntu:22.04 AS runner
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
@@ -67,7 +77,6 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
-    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app /app
